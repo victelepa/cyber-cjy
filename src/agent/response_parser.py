@@ -19,8 +19,13 @@ def parse_response(raw: str) -> ParsedResponse:
     # 移除表情包标记，得到纯文本
     text = re.sub(r'\[STICKER:[a-zA-Z_]+\]', '', raw).strip()
 
-    # 按 "---" 分割为多条消息（模拟连发）
-    messages = [m.strip() for m in text.split("---") if m.strip()]
+    # 先按 "---" 分割，再按换行分割
+    # LLM 有时用 ---，有时直接换行，两种都要处理
+    raw_parts = text.split("---")
+    messages = []
+    for part in raw_parts:
+        lines = [l.strip() for l in part.split("\n") if l.strip()]
+        messages.extend(lines)
     if not messages:
         messages = [text]
 

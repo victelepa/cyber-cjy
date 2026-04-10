@@ -21,6 +21,7 @@ from src.agent.nodes import (
     parse_response_node,
     match_sticker_node,
     format_output_node,
+    update_emotion_node,
     should_send_sticker,
 )
 
@@ -28,7 +29,7 @@ load_dotenv()
 
 
 class CyberGirlfriendAgent:
-    """Phase 4 完整 Agent，使用 LangGraph + 三级记忆"""
+    """Phase 4/5/6 完整 Agent，使用 LangGraph + 三级记忆 + 情绪状态机"""
 
     def __init__(self, config_path: str = "config.yaml"):
         with open(config_path, encoding="utf-8") as f:
@@ -38,6 +39,8 @@ class CyberGirlfriendAgent:
         self.memory = MemoryManager(self.config)
         self.persona = self._load_persona()
         self.sticker_matcher = self._init_sticker_matcher()
+        # Phase 6: 情绪状态跨轮持久化
+        self.emotion_state: str = "平静"
         self._graph = self._build_graph()
 
     def _init_sticker_matcher(self) -> StickerMatcher:
@@ -77,6 +80,8 @@ class CyberGirlfriendAgent:
             partial(match_sticker_node, sticker_matcher=self.sticker_matcher),
         )
         workflow.add_node("format_output", format_output_node)
+        # Phase 6: 情绪更新节点
+        workflow.add_node("update_emotion", update_emotion_node)
 
         # 边
         workflow.set_entry_point("retrieve_memory")
@@ -89,7 +94,9 @@ class CyberGirlfriendAgent:
             {"yes": "match_sticker", "no": "format_output"},
         )
         workflow.add_edge("match_sticker", "format_output")
-        workflow.add_edge("format_output", END)
+        # format_output 后更新情绪，再结束
+        workflow.add_edge("format_output", "update_emotion")
+        workflow.add_edge("update_emotion", END)
 
         return workflow.compile()
 
@@ -100,6 +107,8 @@ class CyberGirlfriendAgent:
             "text": str,           # 纯文本回复
             "messages": list[str], # 按 --- 分割的多条消息
             "sticker_tag": str | None,
+            "sticker_path": str | None,
+            "emotion_state": str,  # 本轮对话后的情绪状态
           }
         """
         initial_state: AgentState = {
@@ -109,6 +118,7 @@ class CyberGirlfriendAgent:
             "few_shot_examples": "",
             "core_memory": self.memory.core.get_all(),
             "persona_section": self.persona.to_system_prompt_section(),
+            "emotion_state": self.emotion_state,  # Phase 6: 注入当前情绪
             "response_text": "",
             "sticker_tag": None,
             "sticker_path": None,
@@ -117,6 +127,10 @@ class CyberGirlfriendAgent:
 
         result = self._graph.invoke(initial_state)
         output = result.get("final_output", {})
+
+        # Phase 6: 回收情绪状态，下轮继续使用
+        self.emotion_state = result.get("emotion_state", self.emotion_state)
+        output["emotion_state"] = self.emotion_state
 
         # 更新记忆
         reply_text = output.get("text", "")
@@ -127,3 +141,4 @@ class CyberGirlfriendAgent:
 
     def reset(self):
         self.memory.reset_short_term()
+        self.emotion_state = "平静"

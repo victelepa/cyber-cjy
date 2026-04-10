@@ -4,6 +4,7 @@
 然后在浏览器访问 http://localhost:7860
 """
 import os
+import time
 from pathlib import Path
 import gradio as gr
 from dotenv import load_dotenv
@@ -17,7 +18,7 @@ agent = None
 def get_agent():
     global agent
     if agent is None:
-        # Phase 4: 优先使用 LangGraph Agent（有长期记忆）
+        # 优先使用 LangGraph Agent（有长期记忆 + 情绪状态机）
         # 若 ChromaDB 索引未建立，自动降级到 simple_agent
         try:
             from src.agent.graph import CyberGirlfriendAgent
@@ -29,12 +30,20 @@ def get_agent():
     return agent
 
 
-def chat(user_message: str, history: list) -> tuple[str, list]:
-    """Gradio 聊天回调（Gradio 6.0 messages 格式）"""
-    if not user_message.strip():
-        return "", history
+def chat(user_message: str, history: list, current_emotion: str):
+    """
+    Gradio 聊天回调 — generator 版本（Phase 6）。
 
+    连发消息逐条插入气泡，消息间有短暂延迟，模拟真实打字节奏。
+    Yields: (msg_input_value, chatbot_history, emotion_markdown)
+    """
+    if not user_message.strip():
+        yield "", history, current_emotion
+        return
+
+    # 先把用户消息加入历史
     history = history + [{"role": "user", "content": user_message}]
+    yield "", history, current_emotion
 
     try:
         ag = get_agent()
@@ -42,24 +51,36 @@ def chat(user_message: str, history: list) -> tuple[str, list]:
 
         # LangGraph agent 返回 dict，simple_agent 返回 ParsedResponse
         if isinstance(result, dict):
-            reply = "\n".join(result.get("messages", [result.get("text", "")]))
+            messages = result.get("messages") or [result.get("text", "")]
             sticker_path = result.get("sticker_path")
+            emotion = result.get("emotion_state", "平静")
         else:
-            reply = "\n".join(result.messages)
+            messages = result.messages
             sticker_path = None
+            emotion = "平静"
 
-        history = history + [{"role": "assistant", "content": reply}]
+        emotion_md = f"情绪：**{emotion}**"
 
-        # 表情包作为独立消息插入对话流（紧跟在文字回复后）
+        # Phase 6: 连发消息分气泡，逐条加入并 yield（模拟打字延迟）
+        for i, msg in enumerate(messages):
+            if not msg.strip():
+                continue
+            history = history + [{"role": "assistant", "content": msg.strip()}]
+            yield "", history, emotion_md
+            # 消息之间加短暂停顿（最后一条消息后不停顿）
+            if i < len(messages) - 1:
+                time.sleep(0.6)
+
+        # 表情包作为独立消息插入对话流
         if sticker_path and Path(sticker_path).exists():
+            time.sleep(0.3)
             history = history + [{"role": "assistant", "content": {"path": sticker_path}}]
-
-        return "", history
+            yield "", history, emotion_md
 
     except Exception as e:
         error_msg = f"[错误] {str(e)}"
         history = history + [{"role": "assistant", "content": error_msg}]
-        return "", history
+        yield "", history, current_emotion
 
 
 def reset_chat():
@@ -111,6 +132,7 @@ with gr.Blocks(title="赛博cjy Agent") as demo:
         chatbot = gr.Chatbot(
             label="对话",
             height=500,
+            group_consecutive_messages=False,  # Phase 6: 连发消息各自独立气泡
         )
 
         with gr.Row():
@@ -125,18 +147,18 @@ with gr.Blocks(title="赛博cjy Agent") as demo:
 
         with gr.Row():
             reset_btn = gr.Button("清空对话", variant="secondary", size="sm")
-            gr.Markdown("*Phase 5 — 表情包系统*")
+            emotion_display = gr.Markdown("情绪：平静", elem_id="emotion-status")
 
     # 事件绑定
     send_btn.click(
         fn=chat,
-        inputs=[msg_input, chatbot],
-        outputs=[msg_input, chatbot],
+        inputs=[msg_input, chatbot, emotion_display],
+        outputs=[msg_input, chatbot, emotion_display],
     )
     msg_input.submit(
         fn=chat,
-        inputs=[msg_input, chatbot],
-        outputs=[msg_input, chatbot],
+        inputs=[msg_input, chatbot, emotion_display],
+        outputs=[msg_input, chatbot, emotion_display],
     )
     reset_btn.click(
         fn=reset_chat,

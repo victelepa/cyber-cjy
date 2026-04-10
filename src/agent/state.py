@@ -15,6 +15,8 @@ class AgentState(TypedDict):
     # 核心记忆和人设快照
     core_memory: dict
     persona_section: str
+    # 情绪状态机（Phase 6）— 跨轮持久化，由 CyberGirlfriendAgent 注入和回收
+    emotion_state: str
     # Agent 生成的回复
     response_text: str
     # 表情包决策

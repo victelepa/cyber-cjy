@@ -5,6 +5,7 @@ from src.agent.prompt_builder import build_system_prompt, build_context_block
 from src.agent.response_parser import parse_response
 from src.agent.state import AgentState
 from src.utils.time_utils import get_time_context
+from src.utils.emotion import infer_emotion
 from src.sticker.matcher import StickerMatcher
 
 
@@ -30,6 +31,7 @@ def generate_reply_node(state: AgentState, llm) -> dict:
         persona_section=state["persona_section"],
         core_memory=state["core_memory"],
         time_context=get_time_context(),
+        emotion_state=state.get("emotion_state", "平静"),
     )
 
     context_block = build_context_block(
@@ -76,6 +78,16 @@ def format_output_node(state: AgentState) -> dict:
             "sticker_path": state.get("sticker_path"),
         }
     }
+
+
+def update_emotion_node(state: AgentState) -> dict:
+    """节点7（Phase 6）: 根据本轮对话更新情绪状态"""
+    new_emotion = infer_emotion(
+        user_input=state.get("user_input", ""),
+        bot_reply=state.get("response_text", ""),
+        current_emotion=state.get("emotion_state", "平静"),
+    )
+    return {"emotion_state": new_emotion}
 
 
 # ── 条件边函数 ──
