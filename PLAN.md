@@ -6,15 +6,17 @@
 
 ## 0. 技术选型
 
-| 层面 | 选择 | 说明 |
-|------|------|------|
-| 语言 | Python 3.11+ | AI 生态最成熟 |
-| Agent 框架 | **LangChain 0.3+ / LangGraph** | LangChain 负责 LLM 调用、Embedding、向量检索等基础设施；LangGraph 负责 Agent 流程编排（状态机） |
-| LLM | DeepSeek-V3 / Qwen-Max | 中文语境优秀、性价比极高；通过 `ChatOpenAI` 兼容接口统一调用，支持一键切换到 GPT-4o / Claude |
-| Embedding | `BAAI/bge-large-zh-v1.5`（本地首选）或 OpenAI `text-embedding-3-small` | 本地模型免费且中文效果极佳 |
-| 向量数据库 | ChromaDB | 本地轻量，零运维，LangChain 原生支持 |
-| 前端 | Gradio | 快速出 Web 聊天界面 MVP |
-| 部署 | 本地优先 | 后续可容器化或接入微信机器人 |
+
+| 层面        | 选择                                                              | 说明                                                                   |
+| --------- | --------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 语言        | Python 3.11+                                                    | AI 生态最成熟                                                             |
+| Agent 框架  | **LangChain 0.3+ / LangGraph**                                  | LangChain 负责 LLM 调用、Embedding、向量检索等基础设施；LangGraph 负责 Agent 流程编排（状态机） |
+| LLM       | DeepSeek-V3 / Qwen-Max                                          | 中文语境优秀、性价比极高；通过 `ChatOpenAI` 兼容接口统一调用，支持一键切换到 GPT-4o / Claude        |
+| Embedding | `BAAI/bge-large-zh-v1.5`（本地首选）或 OpenAI `text-embedding-3-small` | 本地模型免费且中文效果极佳                                                        |
+| 向量数据库     | ChromaDB                                                        | 本地轻量，零运维，LangChain 原生支持                                              |
+| 前端        | Gradio                                                          | 快速出 Web 聊天界面 MVP                                                     |
+| 部署        | 本地优先                                                            | 后续可容器化或接入微信机器人                                                       |
+
 
 ### 为什么用 LangChain
 
@@ -26,6 +28,7 @@ LangChain 在本项目中承担**基础设施层**角色：
 - **LangGraph 状态机** — Agent 的决策流（判断发不发表情包、要不要更新记忆、情绪状态转移）用 LangGraph 的有向图编排，清晰可控
 
 **自定义部分**（不依赖 LangChain 内置）：
+
 - 人设分析引擎
 - 表情包管理与匹配系统
 - 核心记忆的 key-value 存储与更新逻辑
@@ -72,11 +75,11 @@ data/
 }
 ```
 
-2. **对话分段** — 按时间间隔（如 >30 分钟无消息）将消息流切分为独立"对话会话"
-3. **过滤与清洗** — 去除系统消息、撤回消息、空消息；处理特殊字符和微信特有格式
-4. **表情包提取** — 将自定义表情图片单独存储，建立 `(上下文, 情绪) -> 表情包` 映射索引
-5. **对话对构建** — 提取"你说 -> 她回"的对话对，作为 few-shot 示例库
-6. **向量索引构建** — 使用 LangChain 的 `RecursiveCharacterTextSplitter` 对对话分段做 chunking，embedding 后存入 ChromaDB
+1. **对话分段** — 按时间间隔（如 >30 分钟无消息）将消息流切分为独立"对话会话"
+2. **过滤与清洗** — 去除系统消息、撤回消息、空消息；处理特殊字符和微信特有格式
+3. **表情包提取** — 将自定义表情图片单独存储，建立 `(上下文, 情绪) -> 表情包` 映射索引
+4. **对话对构建** — 提取"你说 -> 她回"的对话对，作为 few-shot 示例库
+5. **向量索引构建** — 使用 LangChain 的 `RecursiveCharacterTextSplitter` 对对话分段做 chunking，embedding 后存入 ChromaDB
 
 ---
 
@@ -177,6 +180,7 @@ def get_embedding_model(config: dict):
 ```
 
 `config.yaml` 示例：
+
 ```yaml
 llm:
   provider: deepseek      # deepseek / qwen / openai / claude
@@ -258,6 +262,8 @@ graph TD
     Relationship --> PromptBuilder
 ```
 
+
+
 #### 3.3.1 短期记忆 (`short_term.py`)
 
 使用 LangChain 的 `ConversationBufferWindowMemory`，保留最近 15-20 轮对话，直接拼入 prompt。
@@ -320,6 +326,8 @@ graph LR
     HistoryContext["她的历史使用频率"] --> StickerSelect
 ```
 
+
+
 工作流程：
 
 1. **预处理阶段**: 从聊天记录中提取她发过的所有自定义表情包图片，用视觉模型（GPT-4o-vision / Qwen-VL）给每张图打上情绪标签和适用场景标签，存为索引 JSON
@@ -350,6 +358,8 @@ graph TD
     ShouldUpdateCore -->|否| End([返回回复])
     UpdateCoreMemory --> End
 ```
+
+
 
 ```python
 # src/agent/state.py
@@ -464,15 +474,17 @@ Pillow>=10.0                    # 表情包图片处理
 
 ## 6. 费用概览
 
-| 环节 | 选项 | 费用 |
-|------|------|------|
-| LLM 对话（持续） | DeepSeek-V3 API | ~¥0.0024/轮，聊 1000 轮约 ¥2.4 |
-| Embedding 向量化 | 本地 BGE 模型 | **免费** |
-| 人设分析（一次性） | LLM API 调用 | ¥0.5-2 |
-| 表情包标注（一次性） | 视觉模型 API | ¥1-3（取决于数量） |
-| ChromaDB | 本地 | **免费** |
-| Gradio UI | 本地 | **免费** |
-| LangChain / LangGraph | 开源 | **免费** |
+
+| 环节                    | 选项              | 费用                        |
+| --------------------- | --------------- | ------------------------- |
+| LLM 对话（持续）            | DeepSeek-V3 API | ~¥0.0024/轮，聊 1000 轮约 ¥2.4 |
+| Embedding 向量化         | 本地 BGE 模型       | **免费**                    |
+| 人设分析（一次性）             | LLM API 调用      | ¥0.5-2                    |
+| 表情包标注（一次性）            | 视觉模型 API        | ¥1-3（取决于数量）               |
+| ChromaDB              | 本地              | **免费**                    |
+| Gradio UI             | 本地              | **免费**                    |
+| LangChain / LangGraph | 开源              | **免费**                    |
+
 
 ---
 
@@ -481,11 +493,13 @@ Pillow>=10.0                    # 表情包图片处理
 按以下顺序分阶段实现，每阶段都能独立运行验证：
 
 ### Phase 1 — 数据准备
+
 - 编写微信聊天记录导出图文指南 (`scripts/export_guide.md`)
 - 实现数据预处理脚本 (`scripts/preprocess.py`)
 - 输出标准化 `messages.jsonl` + 对话分段 + 对话对
 
 ### Phase 2 — 基础对话（最小闭环）
+
 - 搭建项目骨架、安装依赖
 - 实现 LLM Provider（基于 LangChain `ChatOpenAI`）
 - 编写基础人设 System Prompt（手写先行）
@@ -493,11 +507,13 @@ Pillow>=10.0                    # 表情包图片处理
 - **目标**: 能在浏览器里和一个"基础版赛博女友"聊天
 
 ### Phase 3 — 人设分析
+
 - 实现 `PersonaProfile` Pydantic 模型
 - 编写 `analyze_persona.py`，自动从聊天记录生成结构化人设档案
 - 将人设档案集成到 System Prompt
 
 ### Phase 4 — 记忆系统
+
 - 实现短期记忆（`ConversationBufferWindowMemory`）
 - 构建 ChromaDB 向量索引（`scripts/build_index.py`）
 - 实现长期记忆检索（ChromaDB Retriever）
@@ -506,12 +522,14 @@ Pillow>=10.0                    # 表情包图片处理
 - 用 LangGraph 编排记忆更新流程
 
 ### Phase 5 — 表情包系统
+
 - 表情包提取与视觉标注脚本
 - 实现语境-表情包匹配器
 - 集成到 LangGraph Agent 流程
 - Gradio UI 支持表情包图片渲染
 
 ### Phase 6 — 打磨优化
+
 - 上下文感知增强（时间感知、情绪状态机）
 - 连发消息模拟（从数据中学习连发模式）
 - Few-shot 示例检索（相似场景下的真实回复）
@@ -529,3 +547,4 @@ Pillow>=10.0                    # 表情包图片处理
 - **情绪状态机**: 维护一个对话级别的情绪状态（LangGraph State 中的 `emotion_state`），影响后续回复的语气和内容
 - **安全边界**: 设定清晰的边界（哪些话题 agent 应该拒绝或回避），防止模型产生不当内容
 - **数据隐私**: 所有数据本地处理和存储，API 调用仅发送必要的 prompt 内容，敏感信息脱敏处理
+
