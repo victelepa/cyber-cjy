@@ -43,15 +43,17 @@ def chat(user_message: str, history: list) -> tuple[str, list]:
         # LangGraph agent 返回 dict，simple_agent 返回 ParsedResponse
         if isinstance(result, dict):
             reply = "\n".join(result.get("messages", [result.get("text", "")]))
-            sticker_tag = result.get("sticker_tag")
+            sticker_path = result.get("sticker_path")
         else:
             reply = "\n".join(result.messages)
-            sticker_tag = result.sticker_tag
-
-        if sticker_tag:
-            reply += f"\n[表情包: {sticker_tag}]"
+            sticker_path = None
 
         history = history + [{"role": "assistant", "content": reply}]
+
+        # 表情包作为独立消息插入对话流（紧跟在文字回复后）
+        if sticker_path and Path(sticker_path).exists():
+            history = history + [{"role": "assistant", "content": {"path": sticker_path}}]
+
         return "", history
 
     except Exception as e:
@@ -123,7 +125,7 @@ with gr.Blocks(title="赛博cjy Agent") as demo:
 
         with gr.Row():
             reset_btn = gr.Button("清空对话", variant="secondary", size="sm")
-            gr.Markdown("*Phase 4 — 三级记忆 + LangGraph*")
+            gr.Markdown("*Phase 5 — 表情包系统*")
 
     # 事件绑定
     send_btn.click(
@@ -149,4 +151,5 @@ if __name__ == "__main__":
         share=False,
         inbrowser=True,
         theme=gr.themes.Soft(),
+        allowed_paths=["data/processed/stickers"],
     )

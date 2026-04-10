@@ -19,5 +19,6 @@ class AgentState(TypedDict):
     response_text: str
     # 表情包决策
     sticker_tag: str | None
+    sticker_path: str | None  # 实际图片文件路径（Phase 5）
     # 最终输出
     final_output: dict

@@ -5,6 +5,7 @@ from src.agent.prompt_builder import build_system_prompt, build_context_block
 from src.agent.response_parser import parse_response
 from src.agent.state import AgentState
 from src.utils.time_utils import get_time_context
+from src.sticker.matcher import StickerMatcher
 
 
 def retrieve_memory_node(state: AgentState, memory_manager) -> dict:
@@ -57,14 +58,22 @@ def parse_response_node(state: AgentState) -> dict:
     }
 
 
+def match_sticker_node(state: AgentState, sticker_matcher: StickerMatcher) -> dict:
+    """节点5: 从表情包库中匹配真实图片文件"""
+    sticker_tag = state.get("sticker_tag")
+    sticker_path = sticker_matcher.match(sticker_tag)
+    return {"sticker_path": sticker_path}
+
+
 def format_output_node(state: AgentState) -> dict:
-    """节点5: 格式化最终输出"""
+    """节点6: 格式化最终输出"""
     parsed = parse_response(state["response_text"])
     return {
         "final_output": {
             "text": state["response_text"],
             "messages": parsed.messages,
             "sticker_tag": state.get("sticker_tag"),
+            "sticker_path": state.get("sticker_path"),
         }
     }
 

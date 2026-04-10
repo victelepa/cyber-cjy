@@ -13,10 +13,13 @@ from src.llm.provider import get_chat_model
 from src.persona.profile import PersonaProfile, MANUAL_FALLBACK_PERSONA
 from src.memory.manager import MemoryManager
 from src.agent.state import AgentState
+from src.sticker.manager import StickerManager
+from src.sticker.matcher import StickerMatcher
 from src.agent.nodes import (
     retrieve_memory_node,
     generate_reply_node,
     parse_response_node,
+    match_sticker_node,
     format_output_node,
     should_send_sticker,
 )
@@ -34,7 +37,19 @@ class CyberGirlfriendAgent:
         self.llm = get_chat_model(self.config["llm"])
         self.memory = MemoryManager(self.config)
         self.persona = self._load_persona()
+        self.sticker_matcher = self._init_sticker_matcher()
         self._graph = self._build_graph()
+
+    def _init_sticker_matcher(self) -> StickerMatcher:
+        sticker_cfg = self.config.get("sticker", {})
+        manager = StickerManager(
+            library_path=sticker_cfg.get("library_path", "data/processed/stickers"),
+            index_path=sticker_cfg.get("index_path", "data/processed/sticker_index.json"),
+        )
+        return StickerMatcher(
+            manager=manager,
+            send_probability=sticker_cfg.get("send_probability", 0.3),
+        )
 
     def _load_persona(self) -> PersonaProfile:
         path = self.config["persona"]["profile_path"]
@@ -47,7 +62,7 @@ class CyberGirlfriendAgent:
         """构建 LangGraph 状态机"""
         workflow = StateGraph(AgentState)
 
-        # 绑定依赖（llm / memory_manager）到节点函数
+        # 绑定依赖（llm / memory_manager / sticker_matcher）到节点函数
         workflow.add_node(
             "retrieve_memory",
             partial(retrieve_memory_node, memory_manager=self.memory),
@@ -57,13 +72,23 @@ class CyberGirlfriendAgent:
             partial(generate_reply_node, llm=self.llm),
         )
         workflow.add_node("parse_response", parse_response_node)
+        workflow.add_node(
+            "match_sticker",
+            partial(match_sticker_node, sticker_matcher=self.sticker_matcher),
+        )
         workflow.add_node("format_output", format_output_node)
 
         # 边
         workflow.set_entry_point("retrieve_memory")
         workflow.add_edge("retrieve_memory", "generate_reply")
         workflow.add_edge("generate_reply", "parse_response")
-        workflow.add_edge("parse_response", "format_output")
+        # 条件边: 如果 LLM 输出了 [STICKER:tag] 就去匹配图片，否则直接格式化输出
+        workflow.add_conditional_edges(
+            "parse_response",
+            should_send_sticker,
+            {"yes": "match_sticker", "no": "format_output"},
+        )
+        workflow.add_edge("match_sticker", "format_output")
         workflow.add_edge("format_output", END)
 
         return workflow.compile()
@@ -86,6 +111,7 @@ class CyberGirlfriendAgent:
             "persona_section": self.persona.to_system_prompt_section(),
             "response_text": "",
             "sticker_tag": None,
+            "sticker_path": None,
             "final_output": {},
         }
 

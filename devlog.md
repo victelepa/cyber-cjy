@@ -266,7 +266,95 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 ---
 
-## 当前状态（Phase 4 完成）
+## Phase 5 — 表情包系统
+
+### 做了什么
+
+实现了完整的表情包系统，从图片库管理到 LangGraph 流程集成，再到 Gradio UI 内联渲染。
+
+核心文件：
+- `src/sticker/manager.py` — 表情包库管理，加载/查询 `sticker_index.json`
+- `src/sticker/matcher.py` — 情绪标签 → 图片文件匹配
+- `scripts/annotate_stickers.py` — 表情包批量打标签脚本
+
+### 表情包数据来源
+
+图片文件已经在 Phase 1 预处理时分离好了：`preprocess.py` 通过 `isSend=0` 从聊天记录里识别出她发的表情包 MD5，在 `data/raw/emojis/` 里找到对应文件，复制到 `data/processed/stickers/`。共 373 个文件（610 个唯一 MD5 中有本地文件的部分）。
+
+### 表情包标注
+
+文件名都是 MD5 哈希，用文件名猜情绪完全没用——373 张全部打成 `cute` 作为兜底。
+
+正确做法是用**聊天上下文**推断情绪：每张表情包在聊天记录里有具体的发送时刻，取前后各 3 条文字消息作为上下文，对这些文字做情绪关键词匹配。
+
+`annotate_stickers.py` 支持三种模式：
+
+| 模式 | 原理 | 命令 |
+|------|------|------|
+| 关键词上下文（默认） | 读 `messages.jsonl`，对周围文字做中文关键词匹配 | 直接运行 |
+| LLM 文本上下文 | 同上但把上下文喂给文本 LLM 判断 | `--llm-context` |
+| 视觉模型 | 直接让模型看图（需要支持 vision 的模型） | `--vision` |
+
+### LangGraph 集成
+
+在 Phase 4 的流程里加入了条件分支：
+
+```
+parse_response → [sticker_tag 存在?] → match_sticker → format_output
+                                    ↘ [否]         → format_output
+```
+
+`match_sticker_node` 拿到 LLM 决定的 emotion_tag，通过 `StickerMatcher` 在本地图片库里找到匹配的文件，把绝对路径写入 state。`format_output_node` 把路径一起放进 `final_output`。
+
+### 情绪标签匹配
+
+LLM 可能输出各种情绪词（`confused`、`joyful`、`smug` 等），`matcher.py` 里有别名映射表负责规范化：
+
+```python
+EMOTION_ALIASES = {
+    "happy": ["happy", "joy", "joyful", "glad", "pleased", "高兴", "开心"],
+    "confused": ["confused", "puzzled", "uncertain", "hmm", "疑惑", "困惑"],
+    ...
+}
+```
+
+如果规范化后还找不到匹配的索引条目，兜底返回全库随机一张。
+
+### 踩坑：双重概率过滤
+
+设计上在 `StickerMatcher.match()` 里加了 `send_probability=0.3` 的概率过滤，意图是"模拟真实发表情包的频率"。但问题是：**LLM 决定在回复里加 `[STICKER:tag]` 这件事本身就已经是一次概率决策**（prompt 里写了"不要每条都发"）。matcher 里再过滤一次，等于 70% 的时候 LLM 说发却发不出去。
+
+修复：去掉 matcher 里的概率过滤，频率完全由 prompt 的语言指令控制。
+
+### 踩坑：Gradio 版本问题
+
+**问题1**：`gr.Image` 报 `TypeError: Image.__init__() got an unexpected keyword argument 'show_download_button'`。这个参数在 Gradio 6.x 里被移除了，直接删掉。
+
+**问题2**：把表情包作为独立消息插入聊天时，用了 Gradio 4.x 的元组写法 `(sticker_path,)`，在 Gradio 6.x 里报 `ValueError: Invalid message for Chatbot component`。
+
+Gradio 6.x 的 Chatbot 消息里传图片要用 FileData 字典格式：
+```python
+# 旧写法（Gradio 4.x，报错）
+{"role": "assistant", "content": (sticker_path,)}
+
+# 新写法（Gradio 6.x）
+{"role": "assistant", "content": {"path": sticker_path}}
+```
+
+**问题3**：Gradio 默认不允许从 `data/` 目录提供文件，导致图片加载失败（显示占位图标而不是实际图片）。需要在 `launch()` 里声明允许的目录：
+```python
+demo.launch(allowed_paths=["data/processed/stickers"])
+```
+
+**问题4**：`StickerManager` 用相对路径初始化时，`Path(library_path).exists()` 依赖当前工作目录，在不同位置启动脚本时路径会失效。改用 `.resolve()` 转绝对路径解决。
+
+### 表情包发送逻辑
+
+LLM 自主决定要不要发表情包（prompt 里教了规则："决定发就在回复末尾加 `[STICKER:tag]`，不要每条都发"）。触发后 `match_sticker_node` 找图片，UI 里把图片作为独立消息气泡紧跟在文字回复后插入，视觉上和真实微信类似。
+
+---
+
+## 当前状态（Phase 5 完成）
 
 | 功能 | 状态 |
 |------|------|
@@ -278,7 +366,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 | Few-shot 真实回复检索 | ✅ 完成 |
 | 核心记忆自动提取 | ✅ 完成，每 3 轮检查一次 |
 | LangGraph 状态机 | ✅ 完成 |
-| 表情包系统 | ⬜ Phase 5 待实现 |
+| 表情包库管理 + 标注 | ✅ 完成，373 张 |
+| 表情包情绪匹配 + 内联渲染 | ✅ 完成，Gradio 聊天气泡内显示 |
 | 情绪状态机 | ⬜ Phase 6 待实现 |
 | 连发消息模拟 | ⬜ Phase 6 待实现 |
 
@@ -290,9 +379,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 - **核心记忆误提取**：LLM 判断"是否值得记住"不一定准确，可能把普通闲聊当成关键事实存进去，也可能漏掉真正重要的信息。目前靠人工检查 `data/core_memory.json` 来纠正。
 
-- **连发消息未还原**：她 67% 的连发比例在 Phase 4 里只靠 Prompt 描述（"用 `---` 分隔多条消息"），LLM 执行不稳定，Phase 6 需要专门处理。
+- **连发消息未还原**：她 67% 的连发比例在 Phase 4/5 里只靠 Prompt 描述（"用 `---` 分隔多条消息"），LLM 执行不稳定，Phase 6 需要专门处理。
 
-- **表情包系统空缺**：目前只输出 `[表情包: happy]` 文字占位，没有真正渲染图片。
+- **表情包标注质量有限**：默认的关键词上下文模式是基于规则匹配，准确率有上限。表情包越多场景越丰富，错误分类对实际体验影响不大（兜底会随机选一张），但如果想更准确可以跑 `--llm-context` 模式。
 
 ---
 
@@ -306,13 +395,14 @@ cyber-cjy/
 ├── config.yaml               # 全局配置
 ├── .env                      # API Keys（gitignore）
 ├── requirements.txt
-├── app.py                    # Gradio UI 入口（自动选 Phase 4 或降级 Phase 2）
+├── app.py                    # Gradio UI 入口（自动选 Phase 4/5 或降级 Phase 2）
 │
 ├── scripts/
 │   ├── export_guide.md       # 微信导出指引
 │   ├── preprocess.py         # 数据预处理（WeFlow JSON → 标准 JSONL）
 │   ├── analyze_persona.py    # LLM 人设分析
-│   └── build_index.py        # 构建 ChromaDB 向量索引
+│   ├── build_index.py        # 构建 ChromaDB 向量索引
+│   └── annotate_stickers.py  # 表情包批量打标签
 │
 ├── src/
 │   ├── llm/provider.py       # LLM / Embedding 工厂
@@ -322,11 +412,14 @@ cyber-cjy/
 │   │   ├── long_term.py      # ChromaDB 向量检索
 │   │   ├── core_memory.py    # 关键事实 KV + 自动提取
 │   │   └── manager.py        # 三级记忆协调器
+│   ├── sticker/
+│   │   ├── manager.py        # 表情包库管理（索引加载/查询）
+│   │   └── matcher.py        # 情绪标签 → 图片文件匹配
 │   ├── agent/
 │   │   ├── simple_agent.py   # Phase 2 基础版（保留作参考）
-│   │   ├── graph.py          # Phase 4 LangGraph Agent
-│   │   ├── nodes.py          # LangGraph 节点函数
-│   │   ├── state.py          # AgentState TypedDict
+│   │   ├── graph.py          # Phase 4/5 LangGraph Agent
+│   │   ├── nodes.py          # LangGraph 节点函数（含 match_sticker_node）
+│   │   ├── state.py          # AgentState TypedDict（含 sticker_path）
 │   │   ├── prompt_builder.py # Prompt 组装
 │   │   └── response_parser.py# 回复解析（文本 + 表情包标记）
 │   └── utils/
@@ -340,6 +433,7 @@ cyber-cjy/
     │   ├── conversations/    # 12,777 个对话会话
     │   ├── few_shot_pairs.jsonl  # 32,048 个对话对
     │   ├── stickers/         # 373 个她发过的表情包图片
+    │   ├── sticker_index.json# 表情包情绪/场景标签索引
     │   └── persona.json      # LLM 生成的人设档案
     ├── chroma_db/            # 337MB 向量索引
     └── core_memory.json      # 核心记忆（可手动编辑）
